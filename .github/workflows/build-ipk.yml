@@ -1,7 +1,7 @@
 name: Build ESurfingClient IPK
 
 on:
-  workflow_dispatch: # 允许你手动点击运行
+  workflow_dispatch: # 支持手动点击运行
 
 jobs:
   build:
@@ -10,6 +10,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
 
       - name: Initialization environment
         env:
@@ -18,48 +20,46 @@ jobs:
           sudo apt update
           sudo apt install -y build-essential clang flex bison g++ gawk gcc-multilib g++-multilib gettext git libncurses5-dev libssl-dev python3-distutils rsync unzip zlib1g-dev file wget curl
 
-      - name: Clone OpenWrt Source
-        run: |
-          # 克隆一个轻量级的源码树，这里以 immortalwrt 为例，它对 MT7981 支持好
-          git clone --depth 1 https://github.com/immortalwrt/immortalwrt openwrt
-          
       - name: Update & Install Feeds
         run: |
-          cd openwrt
           ./scripts/feeds update -a
           ./scripts/feeds install -a
 
-      - name: Import Custom Package
+      - name: Setup Custom Package
         run: |
-          # 将你仓库里的源码文件夹移动到 openwrt/package 目录下
-          # 假设你的源码在仓库根目录的 esurfingclient 文件夹
-          mkdir -p openwrt/package/custom
-          cp -r ../esurfingclient openwrt/package/custom/
+          # 将根目录下的插件移动到编译系统目录
+          mkdir -p package/custom
+          cp -r esurfingclient package/custom/
 
-      - name: Configure Target
+      - name: Configure Target (MT7981)
         run: |
-          cd openwrt
-          # 设置 MT7981 (Filogic) 的目标配置
+          # 强制写入适合 JCG AX3000M 的架构配置
           echo "CONFIG_TARGET_mediatek=y" > .config
           echo "CONFIG_TARGET_mediatek_filogic=y" >> .config
-          echo "CONFIG_TARGET_mediatek_filogic_DEVICE_jcg_log-01=y" >> .config # 这里的机型根据源码树里的定义改，通用可以选 generic
+          echo "CONFIG_TARGET_mediatek_filogic_DEVICE_jcg_log-01=y" >> .config
+          # 选中你的插件
           echo "CONFIG_PACKAGE_esurfingclient=m" >> .config
+          # 选中必要的依赖，防止编译失败
+          echo "CONFIG_PACKAGE_libcurl=y" >> .config
+          echo "CONFIG_PACKAGE_libopenssl=y" >> .config
+          echo "CONFIG_PACKAGE_ca-bundle=y" >> .config
+          
           make defconfig
 
-      - name: Build Toolchain & Tools
+      - name: Build Tools & Toolchain
         run: |
-          cd openwrt
-          # 这里解决你刚才在本地遇到的 tools 问题
-          make tools/install -j$(nproc) || make tools/install -j1 V=s
-          make toolchain/install -j$(nproc) || make toolchain/install -j1 V=s
+          # 这一步是解决你本地报错的关键
+          make tools/install -j$(nproc)
+          make toolchain/install -j$(nproc)
 
-      - name: Compile Package
+      - name: Compile ESurfingClient
         run: |
-          cd openwrt
-          make package/esurfingclient/compile V=s
+          # 仅编译你的插件及其依赖项
+          make package/custom/esurfingclient/compile V=s
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: esurfingclient-ipk
-          path: openwrt/bin/packages/aarch64_cortex-a53/*/esurfingclient*.ipk
+          name: esurfingclient-mt7981-ipk
+          # 这里的路径匹配 aarch64 架构下生成的 ipk
+          path: bin/packages/aarch64_cortex-a53/*/esurfingclient*.ipk
